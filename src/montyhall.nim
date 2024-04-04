@@ -2,6 +2,7 @@ import std/cmdline
 import std/strutils
 import std/parseopt
 import std/random
+import std/locks
 
 # Initialize RNG.
 randomize()
@@ -22,9 +23,6 @@ var
   doorCount: int = 3
   samples: int = 10
   threads: int = 1
-  firstTry: int
-  secondTry: int
-  fail: int
 
 # Iterate through arguments/options.
 while true:
@@ -49,11 +47,6 @@ proc generateDoors(n: int = doorCount): seq[Door] =
   result = newSeq[Door](n)
   result[rand(0 .. n-1)].content = Car
 
-func openedDoors(doors: seq[Door]): seq[int] =
-  for i, door in doors:
-    if door.known:
-      result.add(i)
-
 proc chooseRandomDoor(rand: var Rand, doors: seq[Door]): int =
   var availableDoors = newSeq[int](0)
   for i, door in doors:
@@ -61,14 +54,22 @@ proc chooseRandomDoor(rand: var Rand, doors: seq[Door]): int =
       availableDoors.add(i)
   sample(rand, availableDoors)
 
+# # This needs to be global so it can be accessed by the utility functions too.
+# var resultChannels: seq[Channel[float]]
+
+var
+  sumLock: Lock
+  sumWinRate {.guard: sumLock.}: float = 0
+
 # Run `n` simulations of the Monty Hall problem.
-proc simulate(chan: var Channel[float], n: int) {.thread.} =
+proc simulate(n: int) {.nimcall.} =
+  echo n
   var
     uniqueRand = initRand()
     wins: int
     losses: int
 
-  for x in 0 .. n-1:
+  for x in 0 ..< n:
     var currentDoors = generateDoors()
 
     let firstDoorIndex = chooseRandomDoor(uniqueRand, currentDoors)
@@ -84,18 +85,21 @@ proc simulate(chan: var Channel[float], n: int) {.thread.} =
 
     losses += 1
 
-  chan.send(wins / losses)
+  withLock sumLock:
+    var sumWinRateCopy = sumWinRate
+    sumWinRateCopy += wins / losses
+    sumWinRate = sumWinRateCopy
 
-var resultChannels: seq[Channel[float]]
-var allThreads: seq[Thread[void]]
-var sumWinRate: float
+var workers: array[4, Thread[int]]
 
-for t in 0 .. threads-1:
-  var chunkSize = int(samples / t)
-  var newChannel: Channel[float]
-  newChannel.open()
-  resultChannels.add(newChannel)
+for t in 0 .. 3:
+  var
+    chunkSize = int(samples / t)
+    newThread: Thread[int]
 
-  simulate(newChannel, chunkSize)
-  for chan in resultChannels:
-    sumWinRate += chan.recv()
+  createThread(newThread, simulate, chunkSize)
+  workers[t] = newThread
+
+joinThreads(workers)
+
+echo sumWinRate
