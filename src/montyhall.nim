@@ -91,4 +91,4 @@ for t in 0 ..< threads:
 for r in tasks:
   rateSum += ^r
 
-echo rateSum
+echo "Win/loss rate: ", rateSum
