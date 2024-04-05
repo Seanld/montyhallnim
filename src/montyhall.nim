@@ -2,7 +2,7 @@ import std/cmdline
 import std/strutils
 import std/parseopt
 import std/random
-import std/locks
+import std/threadpool
 
 # Initialize RNG.
 randomize()
@@ -54,16 +54,8 @@ proc chooseRandomDoor(rand: var Rand, doors: seq[Door]): int =
       availableDoors.add(i)
   sample(rand, availableDoors)
 
-# # This needs to be global so it can be accessed by the utility functions too.
-# var resultChannels: seq[Channel[float]]
-
-var
-  sumLock: Lock
-  sumWinRate {.guard: sumLock.}: float = 0
-
 # Run `n` simulations of the Monty Hall problem.
-proc simulate(n: int) {.nimcall.} =
-  echo n
+proc simulate(n: int): float {.thread.} =
   var
     uniqueRand = initRand()
     wins: int
@@ -85,21 +77,18 @@ proc simulate(n: int) {.nimcall.} =
 
     losses += 1
 
-  withLock sumLock:
-    var sumWinRateCopy = sumWinRate
-    sumWinRateCopy += wins / losses
-    sumWinRate = sumWinRateCopy
+  return wins / losses
 
-var workers: array[4, Thread[int]]
+var
+  rateSum: float
+  tasks = newSeq[FlowVar[float]]()
 
-for t in 0 .. 3:
-  var
-    chunkSize = int(samples / t)
-    newThread: Thread[int]
+for t in 0 ..< threads:
+  tasks.add(
+    spawn simulate(int(samples / threads))
+  )
 
-  createThread(newThread, simulate, chunkSize)
-  workers[t] = newThread
+for r in tasks:
+  rateSum += ^r
 
-joinThreads(workers)
-
-echo sumWinRate
+echo rateSum
