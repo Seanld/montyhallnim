@@ -3,6 +3,9 @@ import std/strutils
 import std/parseopt
 import std/random
 
+when compileOption("profiler"):
+  import std/nimprof
+
 # Initialize RNG.
 randomize()
 
@@ -15,7 +18,6 @@ type DoorOption = enum
   Car
 
 type Door = object
-  known: bool
   content: DoorOption
 
 var
@@ -40,18 +42,14 @@ while true:
     # echo "Argument: ", parsed.key
     discard
 
+when compileOption("profiler"):
+  enableProfiling()
+
 # Define utility functions to simplify main loop.
 
 proc generateDoors(n: int = doorCount): seq[Door] =
   result = newSeq[Door](n)
   result[rand(0 .. n-1)].content = Car
-
-proc chooseRandomDoor(rand: var Rand, doors: seq[Door]): int =
-  var availableDoors = newSeq[int](0)
-  for i, door in doors:
-    if not door.known:
-      availableDoors.add(i)
-  sample(rand, availableDoors)
 
 var resultsChan: Channel[float]
 resultsChan.open()
@@ -62,17 +60,26 @@ proc simulateN(r: var Rand, n: int) {.thread.} =
   var
     wins: int
     losses: int
+    unopened = newSeq[int]()
 
   for x in 0 ..< n:
+    # Reset existing `unopened` seq. Faster than allocating a
+    # new seq on every iteration.
+    for j in 0 ..< unopened.len:
+      unopened.del(0)
+
     var currentDoors = generateDoors()
 
-    let firstDoorIndex = chooseRandomDoor(r, currentDoors)
+    for j in 0 ..< doorCount:
+      unopened.add(j)
+
+    let firstDoorIndex = sample(r, unopened)
     if currentDoors[firstDoorIndex].content == Car:
       wins += 1
       continue
-    currentDoors[firstDoorIndex].known = true
+    unopened.delete(firstDoorIndex)
 
-    let secondDoorIndex = chooseRandomDoor(r, currentDoors)
+    let secondDoorIndex = sample(r, unopened)
     if currentDoors[secondDoorIndex].content == Car:
       wins += 1
       continue
