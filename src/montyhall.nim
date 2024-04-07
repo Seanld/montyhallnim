@@ -2,7 +2,6 @@ import std/cmdline
 import std/strutils
 import std/parseopt
 import std/random
-import std/threadpool
 
 # Initialize RNG.
 randomize()
@@ -54,41 +53,50 @@ proc chooseRandomDoor(rand: var Rand, doors: seq[Door]): int =
       availableDoors.add(i)
   sample(rand, availableDoors)
 
-# Run `n` simulations of the Monty Hall problem.
-proc simulate(n: int): float {.thread.} =
+var resultsChan: Channel[float]
+resultsChan.open()
+
+# Run `args.n` simulations of the Monty Hall problem, using
+# unique `Rand` instance `args.r`.
+proc simulateN(r: var Rand, n: int) {.thread.} =
   var
-    uniqueRand = initRand()
     wins: int
     losses: int
 
   for x in 0 ..< n:
     var currentDoors = generateDoors()
 
-    let firstDoorIndex = chooseRandomDoor(uniqueRand, currentDoors)
+    let firstDoorIndex = chooseRandomDoor(r, currentDoors)
     if currentDoors[firstDoorIndex].content == Car:
       wins += 1
       continue
     currentDoors[firstDoorIndex].known = true
 
-    let secondDoorIndex = chooseRandomDoor(uniqueRand, currentDoors)
+    let secondDoorIndex = chooseRandomDoor(r, currentDoors)
     if currentDoors[secondDoorIndex].content == Car:
       wins += 1
       continue
 
     losses += 1
 
-  return wins / losses
+  resultsChan.send(wins / (wins + losses))
+
+proc simulate(n: int) {.thread.} =
+  var uniqueRand = initRand()
+  simulateN(uniqueRand, n)
 
 var
   rateSum: float
-  tasks = newSeq[FlowVar[float]]()
+  tasks = newSeq[Thread[int]](threads)
 
 for t in 0 ..< threads:
-  tasks.add(
-    spawn simulate(int(samples / threads))
+  createThread[int](
+    tasks[t],
+    simulate,
+    int(samples / threads),
   )
 
-for r in tasks:
-  rateSum += ^r
+for t in 0 ..< threads:
+  rateSum += resultsChan.recv()
 
-echo "Win/loss rate: ", rateSum
+echo "Win rate: ", (rateSum / float(threads)) * 100, "%"
