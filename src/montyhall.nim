@@ -17,7 +17,7 @@ type DoorOption = enum
   Goat
   Car
 
-type Door = object
+type Door = ref object
   content: DoorOption
 
 var
@@ -47,9 +47,11 @@ when compileOption("profiler"):
 
 # Define utility functions to simplify main loop.
 
-proc generateDoors(n: int = doorCount): seq[Door] =
-  result = newSeq[Door](n)
-  result[rand(0 .. n-1)].content = Car
+proc generateDoors(doors: seq[Door]) =
+  # Reset `doors`. Re-allocating on every call is slow.
+  for i in 0 ..< doorCount:
+    doors[i].content = Goat
+  doors[rand(0 .. doorCount-1)].content = Car
 
 var resultsChan: Channel[float]
 resultsChan.open()
@@ -61,6 +63,12 @@ proc simulateN(r: var Rand, n: int) {.thread.} =
     wins: int
     losses: int
     unopened = newSeq[int]()
+    doors = newSeq[Door]()
+
+  for _ in 0 ..< doorCount:
+    doors.add(Door(
+      content: Goat
+    ))
 
   for x in 0 ..< n:
     # Reset existing `unopened` seq. Faster than allocating a
@@ -68,19 +76,19 @@ proc simulateN(r: var Rand, n: int) {.thread.} =
     for j in 0 ..< unopened.len:
       unopened.del(0)
 
-    var currentDoors = generateDoors()
+    generateDoors(doors)
 
     for j in 0 ..< doorCount:
       unopened.add(j)
 
     let firstDoorIndex = sample(r, unopened)
-    if currentDoors[firstDoorIndex].content == Car:
+    if doors[firstDoorIndex].content == Car:
       wins += 1
       continue
     unopened.delete(firstDoorIndex)
 
     let secondDoorIndex = sample(r, unopened)
-    if currentDoors[secondDoorIndex].content == Car:
+    if doors[secondDoorIndex].content == Car:
       wins += 1
       continue
 
